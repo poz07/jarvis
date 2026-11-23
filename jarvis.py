@@ -52,7 +52,7 @@ DEADLINE: has a future due date or registration deadline
 INFO: useful but not time-sensitive (announcements, seminars, events)
 IGNORE: ads, surveys, mass mailings with no action needed
 
-Reply with JSON only: {{"label": "...", "reason": "one short sentence in English"}}
+Reply with JSON only: {{"label": "...", "reason": "one short sentence in English,Time it was sent,Sender email address"}}
 
 From: {sender}
 Subject: {subject}
