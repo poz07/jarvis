@@ -1,9 +1,23 @@
 import imaplib, email, os, json, requests
 from email.header import decode_header, make_header
 from dotenv import load_dotenv
+from notify import send_alert
 
 load_dotenv()
 MODEL = "llama3.2:3b"
+STATE_FILE = "processed.json"
+ALERT_LABELS = {"URGENT", "DEADLINE"}
+
+def load_processed():
+    try:
+        with open(STATE_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+def save_processed(seen):
+    with open(STATE_FILE, "w") as f:
+        json.dump(seen[-500:], f)
 
 def clean(h):
     return str(make_header(decode_header(h or "")))
@@ -22,6 +36,13 @@ def get_body(msg):
                 return decode_part(part)
         return ""
     return decode_part(msg)
+
+def rule_based(subject):
+    if "Μήνυμα εκπαιδευτή" in subject:
+        return {"label": "URGENT", "reason": "Message from a course instructor"}
+    if "CVE-" in subject:
+        return {"label": "IGNORE", "reason": "IT admin security bulletin"}
+    return None
 
 def classify(sender, subject, body):
     prompt = f"""You sort emails for a university student. The emails are often in Greek.
@@ -45,13 +66,7 @@ Body: {body[:1500]}"""
     r.raise_for_status()
     return json.loads(r.json()["response"])
 
-def rule_based(subject):
-    if "Μήνυμα εκπαιδευτή" in subject:
-        return {"label": "URGENT", "reason": "Message from a course instructor"}
-    if "CVE-" in subject:
-        return {"label": "IGNORE", "reason": "IT admin security bulletin"}
-    return None
-
+seen = load_processed()
 mail = imaplib.IMAP4_SSL(os.getenv("IMAP_SERVER"), 993)
 mail.login(os.getenv("EMAIL_USER"), os.getenv("EMAIL_PASSWORD"))
 mail.select("INBOX", readonly=True)
@@ -62,9 +77,17 @@ for num in ids:
     try:
         status, msg_data = mail.fetch(num, "(BODY.PEEK[])")
         msg = email.message_from_bytes(msg_data[0][1])
+        key = (msg["Message-ID"] or "").strip() or f"{msg['From']}|{msg['Subject']}|{msg['Date']}"
+        if key in seen:
+            continue
         sender, subject = clean(msg["From"]), clean(msg["Subject"])
         result = rule_based(subject) or classify(sender, subject, get_body(msg))
-        print(f"[{result.get('label')}] {subject[:70]}\n    from {sender[:50]} | {result.get('reason')}\n")
+        label = result.get("label")
+        print(f"[{label}] {subject[:70]}\n    {result.get('reason')}\n")
+        if label in ALERT_LABELS:
+            send_alert(f"{label}: {subject[:100]}\n{result.get('reason')}")
+        seen.append(key)
+        save_processed(seen)
     except Exception as e:
         print("Error on one email:", e)
 
